@@ -2,11 +2,10 @@
 """
 ╔══════════════════════════════════════════════════════╗
 ║ KENSHIN ANIME BOT — by @kenshin_anime                ║
-║ Framework : Pyrofork (Pyrogram fork)                 ║
-║ Style     : TMKOC Premium Bold & Blockquote          ║
+║ Style     : TMKOC Premium + Season Number Fix        ║
 ╚══════════════════════════════════════════════════════╝
 """
-import os, io, asyncio, logging
+import os, io, asyncio, logging, re
 import aiohttp
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -43,6 +42,17 @@ def bold_num(s: str) -> str:
 def is_admin(uid: int) -> bool:
     return not ADMIN_IDS or uid in ADMIN_IDS
 
+def extract_season(title: str) -> str:
+    """Title se season number nikalne ka jugaad"""
+    match = re.search(r'(?:Season|S)\s*(\d+)', title, re.IGNORECASE)
+    if match:
+        return match.group(1).zfill(2)
+    if "2nd" in title.lower(): return "02"
+    if "3rd" in title.lower(): return "03"
+    if "4th" in title.lower(): return "04"
+    if "5th" in title.lower(): return "05"
+    return "01" # Default agar kuch na mile
+
 # ════════════════════════════════════════════════════════
 # JIKAN API FETCHING
 # ════════════════════════════════════════════════════════
@@ -58,7 +68,7 @@ async def jikan_search(name: str) -> dict | None:
                     if d.get("data"):
                         return _parse_anime(d["data"][0])
         except Exception as e:
-            log.error(f"Jikan Anime API error: {e}")
+            log.error(f"Jikan API error: {e}")
         return None
 
 def _parse_anime(a: dict) -> dict:
@@ -73,7 +83,7 @@ def _parse_anime(a: dict) -> dict:
         "genres":    genres,
         "score":     str(a.get("score") or "?"),
         "episodes":  str(a.get("episodes") or "?"),
-        "season":    str(a.get("season_year") or a.get("year") or "01"),
+        "season_num": extract_season(title), # Ab yahan real season number aayega
         "runtime":   str(a.get("duration", "Unknown")),
         "status":    str(a.get("status", "Unknown")),
         "studios":   studios,
@@ -87,9 +97,7 @@ def _parse_anime(a: dict) -> dict:
 def build_info_caption(anime: dict) -> str:
     title    = anime["title"].upper()
     category = anime["kind"]
-    # Season logic: agar saal hai toh wahi, warna 01
-    season   = anime["season"]
-    if len(season) < 2: season = season.zfill(2)
+    season   = anime["season_num"] # "01", "02" etc.
     
     episodes = anime["episodes"]
     runtime  = anime["runtime"].lower()
@@ -102,8 +110,7 @@ def build_info_caption(anime: dict) -> str:
     if len(synopsis) > 300:
         synopsis = synopsis[:297] + "..."
 
-    # Formatting as per user request (Full Bold + Blockquotes)
-    caption = (
+    return (
         f"<b>​<blockquote>「 {title} 」</blockquote>\n"
         f"═══════════════════\n"
         f"🌸 Category: {category}\n"
@@ -118,16 +125,10 @@ def build_info_caption(anime: dict) -> str:
         f"<blockquote>🥗 Synopsis: {synopsis}</blockquote>\n\n"
         f"<blockquote>POWERED BY: [@KENSHIN_ANIME]</blockquote></b>"
     )
-    return caption
 
 # ════════════════════════════════════════════════════════
 # COMMAND HANDLERS
 # ════════════════════════════════════════════════════════
-@app.on_message(filters.command("start") & filters.private)
-async def cmd_start(_, msg: Message):
-    if not is_admin(msg.from_user.id): return
-    await msg.reply_text("🎌 <b>Bot Chal Raha Hai!</b>\n\nUse: <code>/info anime name</code>")
-
 @app.on_message(filters.command("info") & filters.private)
 async def cmd_info(_, msg: Message):
     if not is_admin(msg.from_user.id): return
@@ -149,27 +150,16 @@ async def cmd_info(_, msg: Message):
         thumb_url = anime["thumb_url"]
         
         if thumb_url:
-            try:
-                async with aiohttp.ClientSession() as sess:
-                    async with sess.get(thumb_url, timeout=15) as r:
-                        img_bytes = await r.read()
-                        
-                await msg.reply_photo(
-                    photo=io.BytesIO(img_bytes), 
-                    caption=caption, 
-                    parse_mode=ParseMode.HTML
-                )
-                await wait_msg.delete()
-                return
-            except Exception as e:
-                log.warning(f"Image error: {e}")
-                
-        await wait_msg.edit_text(caption, parse_mode=ParseMode.HTML)
-        
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(thumb_url) as r:
+                    img_bytes = await r.read()
+            await msg.reply_photo(photo=io.BytesIO(img_bytes), caption=caption)
+            await wait_msg.delete()
+        else:
+            await wait_msg.edit_text(caption)
+            
     except Exception as e:
-        log.error(f"Error: {e}")
         await wait_msg.edit_text(f"❌ Error: {e}")
 
 if __name__ == "__main__":
-    log.info("🎌 Kenshin Info Bot (TMKOC Style) Started!")
     app.run()
